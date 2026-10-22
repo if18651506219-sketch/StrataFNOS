@@ -1,0 +1,34 @@
+#!/bin/bash
+
+### This script is called after the user installs the application.
+### Provisions the resident-Strata server key (front-end-only mode) into the
+### app's own data dir so the package user can read it at start: cmd/main
+### falls back to ${TRIM_PKGHOME}/data/server_key when the 8080 config json
+### (0700 trim.hermes) is not readable by the package user. Callbacks run as
+### root during install/upgrade, so both sources are readable here.
+
+APPNAME="strata-app"
+KEYFILE="${TRIM_PKGHOME}/data/server_key"
+SRC_JSON="$(ls -1 /vol2/@appdata/trim.hermes/workspace/strata/strata-*.json 2>/dev/null | head -1)"
+
+mkdir -p "${TRIM_PKGHOME}/data" 2>/dev/null
+
+TMPTKEY="${KEYFILE}.tmp"
+python3 - "${SRC_JSON:-/nonexistent}" > "$TMPTKEY" 2>/dev/null <<'PY'
+import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get("api_key", ""))
+except Exception:
+    print("")
+PY
+
+if [ -s "$TMPTKEY" ]; then
+    mv -f "$TMPTKEY" "$KEYFILE"
+    chmod 600 "$KEYFILE" 2>/dev/null
+    chown "${APPNAME}:${APPNAME}" "$KEYFILE" 2>/dev/null
+    setfacl -m u:"${APPNAME}":r "$KEYFILE" 2>/dev/null
+else
+    rm -f "$TMPTKEY"
+fi
+
+exit 0

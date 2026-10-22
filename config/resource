@@ -1,0 +1,12 @@
+{
+  "data-share": {
+    "shares": [
+      {
+        "name": "strata-app"
+      },
+      {
+        "name": "strata-app/data"
+      }
+    ]
+  }
+}

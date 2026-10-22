@@ -1,0 +1,10 @@
+#!/bin/bash
+
+### This script is called after the user upgrades the application.
+### Re-provision the resident-Strata server key (idempotent — same logic as
+### install_callback, which is safe to re-run on every upgrade).
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+bash "${DIR}/install_callback"
+
+exit 0

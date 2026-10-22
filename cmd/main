@@ -1,0 +1,205 @@
+#!/bin/bash
+# Strata App (full front-end) fpk lifecycle: node host + web app behind the
+# fnOS unified gateway (unix socket + prefix/path-rewriting proxy).
+
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+HOST_PID_FILE="${TRIM_PKGVAR}/host.pid"
+PROXY_PID_FILE="${TRIM_PKGVAR}/proxy.pid"
+SOCK_PATH="${TRIM_APPDEST}/strata.sock"
+HTTP_PORT_FILE="${TRIM_PKGVAR}/http_port"
+APP_HOME="${TRIM_PKGHOME}/data"
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"
+}
+
+check_process() {
+    local pid=$1
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+pid_of() {
+    local f=$1
+    if [ -f "$f" ]; then
+        head -n 1 "$f" | tr -d '[:space:]'
+    fi
+}
+
+clean_pidfile() {
+    local f=$1
+    if [ -f "$f" ]; then
+        local p=$(pid_of "$f")
+        if ! check_process "$p"; then
+            rm -f "$f"
+        fi
+    fi
+}
+
+running() {
+    clean_pidfile "${HOST_PID_FILE}"
+    clean_pidfile "${PROXY_PID_FILE}"
+    [ -f "${HOST_PID_FILE}" ] && [ -f "${PROXY_PID_FILE}" ]
+}
+
+pick_port() {
+    # strata-local (mock serve) uses 18090-18094; this app gets its own range
+    for p in 18095 18096 18097 18098 18099; do
+        if ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}\$"; then
+            echo "$p"
+            return 0
+        fi
+    done
+    echo 18095
+}
+
+start_process() {
+    if running; then
+        return 0
+    fi
+    log_msg "Starting strata app host ..."
+
+    # reap orphans from earlier starts/upgrades: any host or proxy still holding
+    # this app's paths but absent from our pidfiles would compete for the same
+    # unix socket / TCP port and make the app hang for the gateway.
+    pkill -TERM -f "sock_proxy.py ${SOCK_PATH}" 2>/dev/null || true
+    pkill -TERM -f "${TRIM_APPDEST}/node/node server/index.mjs" 2>/dev/null || true
+    sleep 1
+
+    mkdir -p "${APP_HOME}" "${APP_HOME}/state" "${APP_HOME}/home" "${APP_HOME}/workspace" "$(dirname "${SOCK_PATH}")"
+
+    local port=$(cat "${HTTP_PORT_FILE}" 2>/dev/null)
+    if [ -z "${port}" ]; then
+        port=$(pick_port)
+        printf "%s" "${port}" > "${HTTP_PORT_FILE}"
+    fi
+
+    # the node host owns the web app, model library, tasks/skills UI and the
+    # Control bridge; it never binds beyond loopback — the gateway proxy is the
+    # only way in. State lives under the app's persistent home, not the package.
+    export HOME="${APP_HOME}/home"
+    export XDG_STATE_HOME="${APP_HOME}/state"
+    export XDG_DATA_HOME="${APP_HOME}"
+    export STRATA_PORT="${port}"
+    export STRATA_BIND="127.0.0.1"
+    export STRATA_WORKSPACE="${APP_HOME}/workspace"
+    export STRATA_DIST="${TRIM_APPDEST}/host/dist"
+    export STRATA_APP_VERSION="0.2.17"
+    # packaged app: real engine + real model library (the desktop shell sets the
+    # same flags; without them the host runs the design/demo engine)
+    export STRATA_REAL_ENGINE=1
+    export STRATA_PACKAGED=1
+    # deliberately NOT STRATA_EXIT_WITH_PARENT: fnOS runs `cmd/main start` as a
+    # short-lived callback and the host must outlive it; stop() cleans up instead.
+    # keep the bundled cuda13 engine unpacking into app data (survives upgrades)
+    export STRATA_COMPONENTS_DIR="${APP_HOME}/components"
+    # 2026-10-21: front-end only — attach to the resident Strata worker on 8080
+    # instead of spawning a second engine onto the GPU. The worker is key-
+    # protected; the key is read from its config at startup (requires an ACL
+    # grant so the strata-app user can read that file, see docs) and passed as
+    # STRATA_SERVER_KEY. Override/point elsewhere via env STRATA_SERVER_URL.
+    # 0.2.15: only enter front-end-only mode when a resident engine actually
+    # answers on 8080 (trim.hermes installed and running). Without it the app
+    # falls back to native mode (bundled Strata Control + engine) so the fpk
+    # also works on machines that never installed trim.hermes.
+    RESIDENT_URL=""
+    if curl -sf --max-time 2 http://127.0.0.1:8080/health 2>/dev/null | grep -q '"service"[[:space:]]*:[[:space:]]*"strata"'; then
+        RESIDENT_URL="http://127.0.0.1:8080/v1"
+    fi
+    RESIDENT_KEY="$(python3 -c "
+import glob,json
+for f in sorted(glob.glob('/vol2/@appdata/trim.hermes/workspace/strata/strata-*.json')):
+    try:
+        k=json.load(open(f)).get('api_key')
+        if k: print(k); break
+    except Exception: pass
+" 2>/dev/null)"
+    if [ -z "$RESIDENT_KEY" ] && [ -f "${APP_HOME}/server_key" ]; then
+        RESIDENT_KEY="$(head -n1 "${APP_HOME}/server_key" | tr -d '[:space:]')"
+    fi
+    # Front-end-only when the worker answers, or a key for it is on hand (it may
+    # still be loading its model after a reboot — stay attached and let the host
+    # reconnect). No key at all -> native mode, so the fpk also works on
+    # machines without trim.hermes or without the ACL grant.
+    if [ -n "$RESIDENT_URL" ] || [ -n "$RESIDENT_KEY" ]; then
+        export STRATA_SERVER_URL="${STRATA_SERVER_URL-${RESIDENT_URL:-http://127.0.0.1:8080/v1}}"
+        export STRATA_SERVER_KEY="${STRATA_SERVER_KEY-$RESIDENT_KEY}"
+    else
+        export STRATA_SERVER_URL="${STRATA_SERVER_URL-}"
+        export STRATA_SERVER_KEY="${STRATA_SERVER_KEY-}"
+    fi
+
+    ( cd "${TRIM_APPDEST}/host" && \
+      exec "${TRIM_APPDEST}/node/node" server/index.mjs --dist "${TRIM_APPDEST}/host/dist" >> "${LOG_FILE}" 2>&1 ) &
+    printf "%s" "$!" > "${HOST_PID_FILE}"
+
+    # wait for the host to bind, then attach the gateway unix socket
+    local ready=0
+    for i in $(seq 1 30); do
+        if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}\$"; then
+            ready=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "${ready}" != "1" ]; then
+        log_msg "host did not bind port ${port} in 30s"
+    fi
+
+    ( exec /usr/bin/python3 \
+        "${TRIM_APPDEST}/sock_proxy.py" "${SOCK_PATH}" "${port}" "/app/strata-app" >> "${LOG_FILE}" 2>&1 ) &
+    printf "%s" "$!" > "${PROXY_PID_FILE}"
+
+    printf "%s" "$$" > "${PID_FILE}"
+    return 0
+}
+
+stop_process() {
+    log_msg "Stopping strata app ..."
+    for f in "${HOST_PID_FILE}" "${PROXY_PID_FILE}"; do
+        local p=$(pid_of "$f")
+        if check_process "$p"; then
+            kill -TERM "${p}" 2>/dev/null
+            local count=0
+            while check_process "${p}" && [ $count -lt 15 ]; do
+                sleep 1
+                count=$((count + 1))
+            done
+            check_process "${p}" && kill -KILL "${p}" 2>/dev/null
+        fi
+        rm -f "$f"
+    done
+    # the host supervises engine instances; make sure nothing lingers
+    pkill -TERM -f "${TRIM_APPDEST}/host/server" 2>/dev/null
+    rm -f "${SOCK_PATH}" "${PID_FILE}"
+    return 0
+}
+
+status() {
+    if running; then
+        return 0
+    fi
+    return 1
+}
+
+case $1 in
+start)
+    start_process
+    ;;
+stop)
+    stop_process
+    ;;
+status)
+    if status; then
+        exit 0
+    else
+        exit 3
+    fi
+    ;;
+*)
+    exit 1
+    ;;
+esac
