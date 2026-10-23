@@ -63,6 +63,10 @@ chk('L0.cmd-syntax', not bad, f'bad={bad}')
 sp = os.path.join(app, 'sock_proxy.py')
 chk('L0.sock-proxy', os.path.exists(sp))
 
+sp_src = open(sp, encoding='utf-8', errors='replace').read() if os.path.exists(sp) else ''
+chk('L0.host-hook-injection', '__STRATA_HOST__' in sp_src, 'sock_proxy injects official API-base hook')
+chk('L0.iterative-prefix-strip', 'while True' in sp_src and 'rewrite_path' in sp_src, 'double-prefix safe')
+
 uicfg = os.path.join(app, 'ui', 'config')
 utxt = open(uicfg, encoding='utf-8', errors='replace').read() if os.path.exists(uicfg) else ''
 chk('L0.ui-title', '"Strata FNOS"' in utxt and '"title": "Strata"' not in utxt, f'ui/config={bool(utxt)}')

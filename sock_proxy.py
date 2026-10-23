@@ -69,14 +69,18 @@ def rewrite_path(method_line):
     if len(parts) != 3:
         return method_line
     p = parts[1]
-    if p == PREFIX or p.startswith(PREFIX + b"/"):
-        target = p[len(PREFIX):] or b"/"
-    elif p.startswith(b"/app/"):
-        tail = p[len(b"/app/"):]
-        seg, slash, remainder = tail.partition(b"/")
-        target = (b"/" + remainder) if slash else b"/"
-    else:
-        target = p
+    # 迭代剥前缀：注入 __STRATA_HOST__ 后，JS 里已重写过的字面量再叠加 base 会
+    # 产生双前缀（/app/strata-app/app/strata-app/...），循环剥干净即可。
+    target = p
+    while True:
+        if target == PREFIX or target.startswith(PREFIX + b"/"):
+            target = target[len(PREFIX):] or b"/"
+        elif target.startswith(b"/app/"):
+            tail = target[len(b"/app/"):]
+            seg, slash, remainder = tail.partition(b"/")
+            target = (b"/" + remainder) if slash else b"/"
+        else:
+            break
     return parts[0] + b" " + target + b" " + parts[2]
 
 
@@ -89,7 +93,19 @@ CSS_URL_RE = re.compile(rb'url\((["\']?)/')
 
 def rewrite_body(ctype, body):
     if ctype.startswith(b"text/html"):
-        return HTML_PATH_RE.sub(lambda m: m.group(1) + PREFIX + m.group(2) + m.group(3), body)
+        body = HTML_PATH_RE.sub(lambda m: m.group(1) + PREFIX + m.group(2) + m.group(3), body)
+        # 0.2.3 起前端用 globalThis.__STRATA_HOST__ 作为 API/SSE base（EventSource
+        # `${Qu}/api/events` 等绕过字面量重写，网关下必 404 → "未连接"横幅）。
+        # 注入官方钩子即可，且不依赖压缩变量名，对上游改名免疫。
+        hook = b'<script>window.__STRATA_HOST__="' + PREFIX + b'";</script>'
+        i = body.lower().find(b"<head")
+        if i != -1:
+            gt = body.find(b">", i)
+            if gt != -1:
+                body = body[:gt + 1] + hook + body[gt + 1:]
+        else:
+            body = hook + body
+        return body
     if ctype.startswith((b"application/javascript", b"text/javascript")):
         for a, b2 in JS_TPL_REPL:
             body = body.replace(a, b2)
