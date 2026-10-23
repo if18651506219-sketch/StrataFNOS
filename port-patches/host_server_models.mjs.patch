@@ -1,0 +1,58 @@
+--- /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/dl/appimg/squashfs-root/usr/lib/Strata/host/server/models.mjs	2026-10-20 12:36:06.000000000 +0800
++++ /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/strata-app/app/host/server/models.mjs	2026-10-21 09:01:48.341024167 +0800
+@@ -20,6 +20,7 @@
+ export const REAL = process.env.STRATA_REAL_ENGINE === '1';
+ import { MODELS_DIR, diskFreeGb, get as getStore, update } from './store.mjs';
+ import * as supervisor from './supervisor.mjs';
++import { currentBackend } from './inference.mjs';
+ import { EventHub, nowIso, round, uid } from './util.mjs';
+ import { locateModelFile } from './model-files.mjs';
+ 
+@@ -96,11 +97,35 @@
+   const engine = supervisor.status();
+   const activeDownloads = [...runtime.values()].filter((r) => r.state === 'downloading').length;
+ 
++  // Front-end-only mode: a resident worker answers at STRATA_SERVER_URL but the local
++  // supervisor is stopped. Reflect the *connected* engine in the library so the UI's
++  // model chip/state matches reality instead of always saying "No model loaded".
++  let connectedCurrent = null, connectedLoaded = null, connectedSynthetic = null;
++  const connectedInfo = currentBackend();
++  if (REAL && !engine.running && connectedInfo && connectedInfo.kind === 'strata' && connectedInfo.modelId) {
++    const hit = VARIANTS.find((v) => connectedInfo.modelId === v.id || connectedInfo.modelId.includes(v.id) || v.id.includes(connectedInfo.modelId)) || null;
++    if (hit) { connectedCurrent = hit.id; connectedLoaded = hit.id; }
++    else {
++      connectedCurrent = connectedInfo.modelId; connectedLoaded = connectedInfo.modelId;
++      connectedSynthetic = {
++        id: connectedInfo.modelId,
++        name: connectedInfo.modelId,
++        label: connectedInfo.modelId,
++        family: 'resident server',
++        quant: '', params: '',
++        blurb: `Connected worker at ${connectedInfo.baseUrl ?? ''}`,
++        role: 'connected', tier: 'connected', state: 'loaded',
++        onDisk: true, local: true, downloadGb: 0, diskGb: 0,
++        ramClass: { minGb: 0, maxGb: 0, label: 'resident' },
++      };
++    }
++  }
++
+   return {
+     mode: REAL ? 'real' : 'simulated',
+-    current: s.current,
+-    loaded: REAL ? (engine.running ? engine.modelId : null) : s.loaded,
+-    variants: VARIANTS.map((v) => {
++    current: s.current ?? connectedCurrent,
++    loaded: REAL ? (engine.running ? engine.modelId : connectedLoaded) : s.loaded,
++    variants: [...VARIANTS.map((v) => {
+       const entry = runtime.get(v.id) ?? { state: 'available' };
+       const onDisk = isOnDisk(v.id);
+       const loading = REAL ? engine.status === 'starting' && engine.modelId === v.id : entry.state === 'loading';
+@@ -124,7 +149,7 @@
+         installedAt: v.local ? onDisk ? v.importedAt : undefined : s.installed?.[v.id]?.installedAt,
+         downloadUrl: downloadUrl(v),
+       };
+-    }),
++    }), ...(connectedSynthetic ? [connectedSynthetic] : [])],
+     downloads: { active: activeDownloads, queued: 0, totalGbToday: round(usedGb, 2) },
+     disk: { modelsDir: MODELS_DIR, usedGb: round(usedGb, 2), freeGb: round(diskFreeGb(MODELS_DIR), 0) },
+     engine: { status: engine.status, binary: engine.binary, port: engine.port, modelId: engine.modelId },

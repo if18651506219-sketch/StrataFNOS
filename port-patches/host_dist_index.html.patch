@@ -1,0 +1,9 @@
+--- /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/dl/appimg/squashfs-root/usr/lib/Strata/host/dist/index.html	2026-10-20 12:36:06.000000000 +0800
++++ /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/strata-app/app/host/dist/index.html	2026-10-21 21:06:48.037104500 +0800
+@@ -31,5 +31,6 @@
+   </head>
+   <body>
+     <div id="root"></div>
++    <script src="/folder-picker.js"></script>
+   </body>
+ </html>

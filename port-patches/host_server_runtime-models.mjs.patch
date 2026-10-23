@@ -1,0 +1,14 @@
+--- /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/dl/appimg/squashfs-root/usr/lib/Strata/host/server/runtime-models.mjs	2026-10-20 12:36:06.000000000 +0800
++++ /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/strata-app/app/host/server/runtime-models.mjs	2026-10-21 08:14:03.474447159 +0800
+@@ -144,8 +144,9 @@
+     if(requests().some(r=>r.instanceId===id && active(r)))throw new Error('Finish or cancel this model’s requests before unloading it.');
+     records.delete(id);queues.delete(id);if(defaultId===id)defaultId=records.keys().next().value??null;publish();return state();
+   }
+-  function setDefault(id) {if(!records.has(id))throw new Error('This model is no longer loaded.');defaultId=id;publish();return state();}
++  function setDefault(id){if(!records.has(id))throw new Error('This model is no longer loaded.');defaultId=id;publish();return state();}
++  function hasLoaded(){return records.size>0;}
+   function update(id,patch) {const row=records.get(id);if(row){Object.assign(row,patch);publish();}}
+   function libraryState(value) {const ids=new Set([...records.values()].map(i=>i.variantId));return {...value,loaded:records.get(defaultId)?.variantId??value.loaded,variants:value.variants.map(v=>ids.has(v.id)?{...v,state:'loaded'}:v)};}
+-  return {state,prepare,plan,adopt,load,resolve,unload,setDefault,update,libraryState,queue:id=>queues.get(id),hasVariant:id=>[...records.values()].some(i=>i.variantId===id)};
++  return {state,prepare,plan,adopt,load,resolve,unload,setDefault,update,hasLoaded,libraryState,queue:id=>queues.get(id),hasVariant:id=>[...records.values()].some(i=>i.variantId===id)};
+ }

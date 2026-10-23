@@ -58,3 +58,23 @@
 ## 许可
 
 上游 Strata 的许可约束适用于所有二进制产物；本移植层脚本按上游仓库同等条款提供。
+
+
+## 版本策略（2026-10-23 起）
+
+- manifest `version` **必须等于上游官方版本号**（如上游 v0.2.3 → manifest 0.2.3），不再自造 0.2.1x 修订段。
+- 历史遗留：曾发过自造的 0.2.17 / 0.2.18 包，fnOS 按数字段比较会判 0.2.17 ≥ 0.2.3，直接拦截覆盖安装（实测 VM 报"已安装相同或更高版本"）。已装旧号的机器升级 0.2.3 需先卸载再安装（数据目录 /vol1/@apphome|@appdata/strata-app 会被保留）。
+- 组件内部版本（control 0.1.48 / engine 0.1.48 / harness 0.2.1-alpha.3）与 manifest 号是两套编号，属正常。
+
+## 升级配方（一键）
+
+```bash
+# 原料（GitHub release v<VER>）: SHA256SUMS.txt + linux-update.AppImage + engine cuda13 tar
+./rebuild_strata.sh <VER>
+```
+
+流程: SHA256 校验 → 解 update.AppImage（control/harness/host/node；engine 用独立 cuda13 tar，目录名 `<cver>-linux-x86_64-cuda-cuda13`）→ host 重贴 port-patches/ 补丁 + folder-picker.js + index.html 注入 → **不变量兜底：不允许残留 `await chooseFolder(`（headless 必须全桥接为 pickFolderBrowser）** → manifest=官方版本 → fnpack → verify_strata.py 全绿才算过。
+
+## 自验
+
+`python3 verify_strata.py strata-app.fpk <VER>`：manifest、零内层链接、cmd 语法、sock_proxy、8 个补丁标记（含 no-chooseFolder-remains）。

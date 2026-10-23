@@ -1,0 +1,160 @@
+--- /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/dl/appimg/squashfs-root/usr/lib/Strata/host/server/index.mjs	2026-10-20 12:36:06.000000000 +0800
++++ /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/strata-app/app/host/server/index.mjs	2026-10-21 20:38:36.658091622 +0800
+@@ -259,6 +259,21 @@
+ 
+ /* ------------------------------------------------------------------- data --- */
+ 
++/* fnOS-port: headless NAS has no zenity/kdialog desktop folder chooser. Bridge
++ * every folder pick to a browser-side picker: the page polls
++ * /api/folder-request/pending, shows a path browser (same data source as
++ * /api/local-models/browse), and posts the chosen path back. */
++const FOLDER_REQUESTS = new Map();
++let FOLDER_REQUEST_SEQ = 0;
++function pickFolderBrowser(prompt) {
++  const id = 'fp' + (++FOLDER_REQUEST_SEQ);
++  const meta = { id, prompt, startPath: store.MODELS_DIR };
++  hub.send('folder-request', meta);
++  return new Promise((resolve) => {
++    FOLDER_REQUESTS.set(id, { resolve, meta, timer: setTimeout(() => { if (FOLDER_REQUESTS.delete(id)) resolve({ cancelled: true }); }, 30 * 60 * 1000) });
++  });
++}
++
+ function setupState() {
+   const s = store.get();
+   return {
+@@ -621,6 +636,39 @@
+     const entry=serving.open({client:client??'Strata chat',endpoint:'/chat/completions',model:instance.apiModelId,instanceId:instance.id,gpuIds:instance.gpus.map(String),cancel:()=>cancel.abort()});
+     try{serving.mark(entry.id,{state:'generating'});const applied=selectSkills(skillState,message,workspaceId);const result=await proxyCompletion({baseUrl:`http://127.0.0.1:${instance.port}/v1`,modelId:instance.apiModelId,authorization:instance.key,message,history,images,extra:{strata_mcp:useTools===true,...(thinkingBudget>0&&String(thinking).toLowerCase()!=='off'?{reasoning_budget_tokens:thinkingBudget}:{}),reasoning_effort:({off:'none',max:'high'}[String(thinking).toLowerCase()]??String(thinking).toLowerCase())},systemPrompt:[SYSTEM_PROMPT,skillInstructions(applied)].filter(Boolean).join('\n\n'),signal:signal?AbortSignal.any([signal,cancel.signal]):cancel.signal,onFrame:frame=>onFrame({...frame,requestId:entry.id,model:instance.label,contextMax:instance.metrics?.engine?.max_context??instance.context,skills:applied.map(s=>s.name)})});serving.mark(entry.id,{...result,usageSource:result.usageSource});serving.finish(entry.id,{tokensOut:result.tokensOut,durationMs:Date.now()-started});return result;}catch(e){serving.finish(entry.id,{durationMs:Date.now()-started,error:e.message});onFrame({type:'error',message:e.message,requestId:entry.id});return {error:e.message};}
+   }
++  // 2026-10-21: front-end-only mode (STRATA_SERVER_URL points at a resident worker, e.g. 8080).
++  // No local/native instance is loaded: route the turn straight to the connected worker instead
++  // of failing on the empty local registry. streamChat's detectBackend picks the `strata` kind
++  // and proxyCompletion sends the key (STRATA_SERVER_KEY / settings apiKey).
++  // (a synthetic library entry for a connected resident server is adopted too, so
++  // require an instance whose catalog variant actually exists before using it)
++  if(!native.hasLive()&&!nativeModelId&&!runtimeModels.state().instances.some(i=>variant(i.variantId))){
++    const connected=await detectBackend();
++    if(connected.kind==='strata'){
++      const started=Date.now(),cancel=new AbortController();
++      const label=connected.modelId||'strata';
++      // The monitor page groups request rows by runtime instance; without an
++      // instanceId the row exists in the log but renders nowhere ("No request yet").
++      // runtimeState() adopts the connected library variant into the runtime registry first.
++      runtimeState();
++      const connInstId=runtimeModels.state().instances.find(i=>i.variantId===label)?.id;
++      const entry=serving.open({client:client??'Strata chat',endpoint:'/chat/completions',model:label,instanceId:connInstId,cancel:()=>cancel.abort()});
++      const appliedSkills=selectSkills(skillState,message,workspaceId);
++      const connectedPrompt=[SYSTEM_PROMPT,skillInstructions(appliedSkills)].filter(Boolean).join('\n\n');
++      serving.mark(entry.id,{state:'generating'});
++      // Feed the monitor dashboard too: the connected branch bypasses the local
++      // engine, so without these calls the speed cards and "last request" stay empty.
++      let connFirstTokenMs=null;
++      try{
++        if(models.REAL){await monitor.setModel(label);if(connected.context)monitor.setContextMax(connected.context);monitor.beginGenerating();}
++        const connectedResult=await streamChat({message,history,systemPrompt:connectedPrompt,modelLabel:label,candidates:readableCandidates(),signal:signal?AbortSignal.any([signal,cancel.signal]):cancel.signal,engine:models.REAL?{beginReading:()=>{},progressReading:()=>{},beginGenerating:()=>{},beginThinking:()=>{}}:undefined,onFrame:(frame)=>{if(frame.type==='stats'||frame.type==='done')monitor.progressOutput(frame.tokensOut);if(frame.type==='delta'||frame.type==='reasoning'){if(connFirstTokenMs===null)connFirstTokenMs=Date.now()-started;}if(frame.type==='done'&&typeof frame.ttftMs==='number')connFirstTokenMs=frame.ttftMs;return onFrame({...frame,...(frame.type==='done'?{ttftMs:connFirstTokenMs}:{}),requestId:entry.id,model:label,contextMax:connected.context??null,skills:appliedSkills.map(s=>s.name)});}});
++        serving.mark(entry.id,{...connectedResult,usageSource:connectedResult.usageSource});
++        serving.finish(entry.id,{tokensOut:connectedResult.tokensOut,durationMs:Date.now()-started});
++        if(models.REAL){monitor.record({tokensIn:connectedResult.tokensIn,tokensOut:connectedResult.tokensOut,durationMs:Date.now()-started,ttftMs:connFirstTokenMs??undefined,cachedTokens:connectedResult.cachedTokens});monitor.setRecordedContext({...connectedResult,requestId:entry.id,sessionId});monitor.idle();}
++        return connectedResult;
++      }catch(e){serving.finish(entry.id,{durationMs:Date.now()-started,error:e.message});if(models.REAL)monitor.idle('Last request failed');onFrame({type:'error',message:plainNoModel(e.message),requestId:entry.id});return {error:e.message};}
++    }
++  }
+   runtimeState();
+   let instance;
+   try{instance=runtimeModels.resolve(runtimeModelId,{chatDefault:runtimeModelId===undefined});}
+@@ -934,7 +982,10 @@
+   try {
+     if (path.startsWith('/api/') && req.headers.origin) {
+       const origin = new URL(req.headers.origin);
+-      if (!['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname)) return error(res, 403, 'Open the local Strata app to use host controls.');
++      // fnOS hands the browser's LAN origin to the backend through its gateway;
++      // private-network origins are the NAS itself reaching its own app.
++      const lan = /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(origin.hostname);
++      if (!['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname) && !lan) return error(res, 403, 'Open the local Strata app to use host controls.');
+     }
+     if (path.startsWith('/api/')) {
+       const modelOperation = !['GET', 'OPTIONS'].includes(method) && /^\/api\/(models|local-models|runtime|image-models|engine|native)(\/|$)/.test(path) && !['/api/runtime/plan', '/api/engine/validate', '/api/local-models/inspect'].includes(path);
+@@ -980,7 +1031,7 @@
+   if(path==='/api/native/local/preview'&&method==='POST'){
+    /* "Use a local GGUF": pick (or type) the folder, and Control says what is in it. Nothing is copied or changed. */
+    const typed=await typedFolder((await readBody(req)).path,{isAbsolute});
+-   const picked=typed?{path:typed}:await chooseFolder('Choose the folder that holds your GGUF files');
++   const picked=typed?{path:typed}:await pickFolderBrowser('选择存放 GGUF 文件的文件夹');
+    if(picked.unavailable){const u=chooserUnavailable(picked);return error(res,501,u.message,{code:u.code});};
+    if(picked.cancelled)return json(res,200,{cancelled:true});
+    return json(res,200,{path:picked.path,preview:await native.localPreview(picked.path)});}
+@@ -1242,6 +1293,11 @@
+     });
+   }
+ 
++  if (path === '/api/frontend-only' && method === 'GET') {
++    const u = (process.env.STRATA_SERVER_URL ?? '').trim();
++    return json(res, 200, { frontendOnly: !!u, baseUrl: u || null });
++  }
++
+   // --- Strata Control: what the installed app runs on, and what it will not do ---------------------
+   if (path === '/api/control/status' && method === 'GET') {
+     const engine = control ? await control.engine().catch(e => ({ usable: false, notice: e.message })) : null;
+@@ -1301,8 +1357,29 @@
+     res.writeHead(200, { 'content-type': file.type, 'content-length': file.bytes.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); res.end(file.bytes); return undefined;
+   }
+ 
++    if (path === '/api/folder-request/pending' && method === 'GET') return json(res, 200, { requests: [...FOLDER_REQUESTS.values()].map(e => e.meta) });
++  if (path === '/api/folder-request/resolve' && method === 'POST') {
++    const body = await readBody(req);
++    const entry = FOLDER_REQUESTS.get(String(body?.id ?? ''));
++    if (!entry) return json(res, 200, { expired: true });
++    clearTimeout(entry.timer);
++    FOLDER_REQUESTS.delete(String(body?.id ?? ''));
++    if (body?.cancel) { entry.resolve({ cancelled: true }); return json(res, 200, { ok: true }); }
++    const typed = await typedFolder(body?.path, { isAbsolute });
++    if (!typed) return error(res, 400, 'Choose an existing folder on the server or type an absolute path.');
++    entry.resolve({ path: typed });
++    return json(res, 200, { ok: true });
++  }
+   if (path === '/api/setup' && method === 'GET') return json(res, 200, setupState());
+-  if (path === '/api/updates/check' && method === 'GET' && control?.updateCheck) return json(res, 200, await checkComponentUpdates({ control, appUpdater, appVersion: process.env.STRATA_APP_VERSION || null }));
++  if (path === '/api/updates/check' && method === 'GET') {
++    // fnOS port: updates are re-ported manually as new fpk releases (this build's
++    // version is STRATA_APP_VERSION); never fetch the upstream GitHub feed, and
++    // never offer in-app install/update buttons.
++    const av = process.env.STRATA_APP_VERSION || setupState().app.version || null;
++    let ev = native.state().version ?? null;
++    try { ev = ev ?? (await engine.config()).engine.version ?? null; } catch { /* engine offline */ }
++    return json(res, 200, { checkedAt: new Date().toISOString(), source: 'fnos-port-managed', strata: { installedVersion: av, status: 'current', message: 'This build is maintained as an fnOS package; updates arrive as new fpk releases.', canInstall: false }, engine: { installedVersion: ev, status: 'current', canInstall: false } });
++  }
+   if (path === '/api/updates/check' && method === 'GET') return json(res, 200, await checkUpdates({ appVersion:appVersionToShow(setupState().app.version,native.state().version), engineVersion:native.state().available?(native.state().installed?.engine?.version??null):(await engine.config()).engine.version }));
+ 
+   if (path === '/api/setup/step' && method === 'POST') {
+@@ -1426,6 +1503,13 @@
+     if (method === 'POST' && action === 'install') { try { return json(res, 200, runtimeModels.libraryState(await models.install(id))); } catch (err) { return error(res, err.status ?? 500, err.message); } }
+     if (method === 'POST' && action === 'cancel') return json(res, 200, runtimeModels.libraryState(models.cancel(id)));
+     if (method === 'POST' && action === 'load') {
++      // Front-end-only mode: a resident worker owns the GPU. Loading locally would
++      // spawn a second engine on the same 16 GB card and OOM (documented incident).
++      const resident = currentBackend();
++      if (resident.kind === 'strata') {
++        if (resident.modelId === id) return json(res, 200, runtimeModels.libraryState(models.library())); // "switch" = already running
++        return error(res, 409, 'A resident Strata server is answering at ' + resident.baseUrl + '; this app will not start a second engine on the same GPU.');
++      }
+       const hw = await hardware.detect();
+       if(storageChanging)return error(res,409,'Wait for the model folder check to finish.');
+       if(!models.REAL){
+@@ -1774,7 +1858,7 @@
+     try {
+       // The dialog is the normal path; a typed `path` in the body stands in where none exists.
+       const typed = await typedFolder((await readBody(req)).path, { isAbsolute });
+-      const picked = typed ? { path: typed } : await chooseFolder('Choose a skill folder (it should contain SKILL.md)');
++      const picked = typed ? { path: typed } : await pickFolderBrowser('选择技能文件夹（包含 SKILL.md）');
+       if (picked.unavailable) {const u=chooserUnavailable(picked);return error(res,501,u.message,{code:u.code});};
+       if (picked.cancelled) return json(res, 200, { cancelled: true });
+       const chosen = picked.path;
+@@ -1799,7 +1883,7 @@
+   if (path === '/api/workspaces/pick' && method === 'POST') {
+     try {
+       const typed = await typedFolder((await readBody(req)).path, { isAbsolute });
+-      const picked = typed ? { path: typed } : await chooseFolder('Choose a folder for Strata');
++      const picked = typed ? { path: typed } : await pickFolderBrowser('为 Strata 选择文件夹');
+       if (picked.unavailable) {const u=chooserUnavailable(picked);return error(res,501,u.message,{code:u.code});};
+       if (picked.cancelled) return json(res, 200, { cancelled: true });
+       return json(res, 200, { path: picked.path });

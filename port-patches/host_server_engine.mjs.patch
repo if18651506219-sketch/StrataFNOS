@@ -1,0 +1,39 @@
+--- /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/dl/appimg/squashfs-root/usr/lib/Strata/host/server/engine.mjs	2026-10-20 12:36:06.000000000 +0800
++++ /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/strata-app/app/host/server/engine.mjs	2026-10-21 13:29:27.742622293 +0800
+@@ -171,6 +171,18 @@
+       if (!item || typeof item.id !== 'string') continue;
+       overrides[item.id] = item.value;
+     }
++    // fnOS-port fix: normalize numeric expert values (form submits strings).
++    try {
++      const catalog = expertParams(cachedHardware()?.cpu?.cores ?? null);
++      for (const p of catalog) {
++        if (p.type !== 'number') continue;
++        const raw = overrides[p.id];
++        if (typeof raw === 'string' && raw.trim() !== '') {
++          const n = Number(raw);
++          if (Number.isFinite(n)) overrides[p.id] = n;
++        }
++      }
++    } catch { /* catalog unavailable; keep raw */ }
+     next.expert = overrides;
+   }
+   if (body.expertReset) next.expert = {};
+@@ -241,6 +253,17 @@
+   const issues = [];
+   const values = Object.fromEntries(params().map(p => [p.id, p.value]));
+   for (const p of draft?.expert ?? []) values[p.id] = p.value;
++  // fnOS-port fix: the web form submits numeric expert fields as strings
++  // (e.g. mem.expertCache "64"); coerce them to numbers so a valid edit does
++  // not fail validation and silently lose the whole save.
++  for (const p of expertParams(hw.cpu.cores)) {
++    if (p.type !== 'number') continue;
++    const raw = values[p.id];
++    if (typeof raw === 'string' && raw.trim() !== '') {
++      const n = Number(raw);
++      if (Number.isFinite(n)) values[p.id] = n;
++    }
++  }
+   const addError = (key, message) => issues.push({ level: 'error', key, message: `${key}: ${message}` });
+   const enums = { priority: ['speed', 'balanced', 'quality', 'coding'], contextLength: Object.keys(CONTEXT_TOKENS), gpuIdle: ['never'] };
+   for (const [key, options] of Object.entries(enums)) if (!options.includes(beginner[key])) addError(key, 'choose a supported value.');

@@ -1,0 +1,32 @@
+--- /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/dl/appimg/squashfs-root/usr/lib/Strata/host/server/inference.mjs	2026-10-20 12:36:06.000000000 +0800
++++ /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/strata-app/app/host/server/inference.mjs	2026-10-21 08:08:06.350601040 +0800
+@@ -58,12 +58,17 @@
+  */
+ async function probeStrata(baseUrl) {
+   try {
+-    const res = await fetch(`${baseUrl.replace(/\/v1$/, '')}/v1/status`, { signal: AbortSignal.timeout(900) });
++    // 2026-10-20: a key-protected worker answers 401 without the header, which used to look like
++    // "not a Strata worker". Send the key the same way the chat path does.
++    const probeKey = process.env.STRATA_SERVER_KEY?.trim()
++      || (getStore().serving?.apiKey ?? null);
++    const authHeaders = probeKey ? { authorization: `Bearer ${probeKey}` } : {};
++    const res = await fetch(`${baseUrl.replace(/\/v1$/, '')}/v1/status`, { headers: authHeaders, signal: AbortSignal.timeout(900) });
+     if (!res.ok) return null;
+     const status = await res.json().catch(() => null);
+     if (!status || typeof status !== 'object') return null;
+     if (status.service !== 'strata') return null;
+-    const models = await fetch(`${baseUrl}/models`, { signal: AbortSignal.timeout(900) })
++    const models = await fetch(`${baseUrl}/models`, { headers: authHeaders, signal: AbortSignal.timeout(900) })
+       .then((r) => (r.ok ? r.json() : null))
+       .catch(() => null);
+     return {
+@@ -210,6 +215,9 @@
+       supervised: false,
+       engine,
+       modelId: be.modelId || 'strata',
++      // 2026-10-21: the resident worker is key-protected; without this the chat
++      // path answers 401 even though the probe (which sends the key) succeeded.
++      authorization: process.env.STRATA_SERVER_KEY?.trim() || (getStore().serving?.apiKey ?? null) || undefined,
+     });
+   }
+ 

@@ -1,7 +1,7 @@
 appname               = strata-app
-version               = 0.2.18
+version               = 0.2.3
 display_name          = Strata FNOS
-desc                  = Strata full app for fnOS — chat, tasks, workspace, skills, monitor (Strata 0.2.1, NVIDIA RTX tuned)
+desc                  = Strata full app for fnOS — chat, tasks, workspace, skills, monitor (Strata 0.2.3, NVIDIA RTX tuned)
 platform              = x86
 source                = thirdparty
 maintainer            = Niko1221 (upstream) / local port
