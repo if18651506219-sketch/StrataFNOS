@@ -11,14 +11,20 @@ VER="$1"
 cd "$W" || exit 1
 
 echo "== 1. SHA256 校验"
-grep -E "Strata-$VER-linux-update.AppImage|strata-engine-.*linux-x86_64-cuda-cuda13.tar.gz|strata-control-.*linux-x86_64.tar.gz" dl/SHA256SUMS-$VER.txt > dl/want.sums || exit 1
+# 官方四段修订号（如 0.2.3.1）的 release 里二进制资产名可能仍是三段号（0.2.3）——自动回退
+AGEB_VER="$VER"
+grep -q "Strata-$VER-linux-update.AppImage" "dl/SHA256SUMS-$VER.txt" || {
+  [ "$VER" != "${VER%.*}" ] && [ "$(awk -F. '{print NF}' <<<"$VER")" -ge 4 ] && AGEB_VER="${VER%.*}"
+}
+echo "asset-name-version=$AGEB_VER (manifest $VER)"
+grep -E "Strata-$AGEB_VER-linux-update.AppImage|strata-engine-.*linux-x86_64-cuda-cuda13.tar.gz|strata-control-.*linux-x86_64.tar.gz" "dl/SHA256SUMS-$VER.txt" > dl/want.sums || exit 1
 (cd dl && sha256sum -c want.sums) || { echo SHA256-FAIL; exit 1; }
 
 echo "== 2. 解 update AppImage（组件源）"
 rm -rf upimg
 mkdir -p upimg
-chmod +x "dl/Strata-$VER-linux-update.AppImage"
-(cd upimg && "../dl/Strata-$VER-linux-update.AppImage" --appimage-extract >/dev/null 2>&1) || { echo EXTRACT-FAIL; exit 1; }
+chmod +x "dl/Strata-$AGEB_VER-linux-update.AppImage"
+(cd upimg && "../dl/Strata-$AGEB_VER-linux-update.AppImage" --appimage-extract >/dev/null 2>&1) || { echo EXTRACT-FAIL; exit 1; }
 S=upimg/squashfs-root/usr/lib/Strata
 [ -d "$S/control" ] || { echo "NO-STRATA-COMPONENTS"; exit 1; }
 echo "components: $(ls $S | tr '\n' ' ') | control VERSION: $(cat $S/control/VERSION)"
@@ -31,6 +37,15 @@ A=strata-app/app
 for c in control harness node; do
   rm -rf "$A/$c"; cp -a "$S/$c" "$A/$c"
 done
+# 3b. control 覆盖：官方四段修订号（0.2.3.1）只更新 control 组件，AppImage 内嵌的是旧号——
+# 若 dl/want.sums 里有独立 control tar，以独立 tar（上游权威分发）覆盖 AppImage 内嵌版
+CTLTAR=$(grep -oE 'strata-control-[0-9.]+-linux-x86_64' dl/want.sums | sort -V | tail -1)
+if [ -n "$CTLTAR" ] && [ -f "dl/${CTLTAR}.tar.gz" ]; then
+  echo "== 3b. control 覆盖安装 $CTLTAR (AppImage 内嵌为 $(cat $A/control/VERSION))"
+  rm -rf "$A/control"; mkdir -p "$A/control"
+  tar -xzf "dl/${CTLTAR}.tar.gz" -C "$A/control" || { echo CONTROL-EXTRACT-FAIL; exit 1; }
+  echo "control VERSION -> $(cat $A/control/VERSION)"
+fi
 rm -rf "$A/engine-bundle"
 mkdir -p "$A/engine-bundle/$VERDIR"
 tar -xzf "dl/${ENGPKG}.tar.gz" -C "$A/engine-bundle/$VERDIR" || { echo ENGINE-EXTRACT-FAIL; exit 1; }
@@ -60,6 +75,9 @@ PY
 fi
 grep -q 'pickFolderBrowser' "$A/host/server/index.mjs" || { echo 'MARKER-MISS index.mjs'; exit 1; }
 [ "$(grep -c 'await chooseFolder(' "$A/host/server/index.mjs" || true)" -eq 0 ] || { echo 'CHOOSEFOLDER-REMAINS'; exit 1; }
+
+echo "== 4b. 载荷链接实体化（fnOS 安装器不接受 symlink 条目）"
+python3 delink_tree.py "$A" || exit 1
 
 echo "== 5. manifest 版本 = 官方 $VER"
 sed -i "s/^version               = .*/version               = $VER/" strata-app/manifest
