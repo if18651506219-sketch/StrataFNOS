@@ -1,0 +1,18 @@
+{
+    ".url": {
+        "strata-app.Application": {
+            "title": "Strata FNOS",
+            "icon": "images/icon_{0}.png",
+            "type": "iframe",
+            "protocol": "http",
+            "gatewaySocket": "strata.sock",
+            "gatewayPrefix": "/app/strata-app",
+            "port": "",
+            "url": "/app/strata-app/",
+            "allUsers": false,
+            "control": {
+                "accessPerm": "readonly"
+            }
+        }
+    }
+}

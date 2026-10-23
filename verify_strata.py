@@ -63,6 +63,10 @@ chk('L0.cmd-syntax', not bad, f'bad={bad}')
 sp = os.path.join(app, 'sock_proxy.py')
 chk('L0.sock-proxy', os.path.exists(sp))
 
+uicfg = os.path.join(app, 'ui', 'config')
+utxt = open(uicfg, encoding='utf-8', errors='replace').read() if os.path.exists(uicfg) else ''
+chk('L0.ui-title', '"Strata FNOS"' in utxt and '"title": "Strata"' not in utxt, f'ui/config={bool(utxt)}')
+
 H = os.path.join(app, 'host')
 markers = {
     'folder-picker.js': os.path.exists(os.path.join(H, 'dist', 'folder-picker.js')),
