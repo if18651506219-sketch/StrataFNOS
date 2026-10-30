@@ -59,6 +59,9 @@ cmd_dir = os.path.join(tmp, 'cmd')
 bad = [f for f in os.listdir(cmd_dir)
        if subprocess.run(['bash', '-n', os.path.join(cmd_dir, f)]).returncode != 0]
 chk('L0.cmd-syntax', not bad, f'bad={bad}')
+main_src = open(os.path.join(cmd_dir, 'main')).read()
+chk('L0.app-version', f'STRATA_APP_VERSION=\"{WANT_VER}\"' in main_src,
+    'cmd/main STRATA_APP_VERSION matches official manifest version')
 
 sp = os.path.join(app, 'sock_proxy.py')
 chk('L0.sock-proxy', os.path.exists(sp))
@@ -76,6 +79,9 @@ markers = {
     'folder-picker.js': os.path.exists(os.path.join(H, 'dist', 'folder-picker.js')),
     'index.html-inject': '<script src="/folder-picker.js"></script>' in read('appx/host/dist/index.html'),
     'index.mjs-folderbridge': 'pickFolderBrowser' in read('appx/host/server/index.mjs'),
+    'index.mjs-folder-routes': "path === '/api/folder-request/pending'" in read('appx/host/server/index.mjs') and "path === '/api/folder-request/resolve'" in read('appx/host/server/index.mjs'),
+    'index.mjs-updates-sealed': 'fnos-port-managed' in read('appx/host/server/index.mjs'),
+    'index.mjs-load-guard': 'resident.kind' in read('appx/host/server/index.mjs'),
     'engine.mjs-coerce': 'fnOS-port fix' in read('appx/host/server/engine.mjs'),
     'inference.mjs-probekey': 'STRATA_SERVER_KEY' in read('appx/host/server/inference.mjs') and 'authHeaders' in read('appx/host/server/inference.mjs'),
     'models.mjs-connected': 'connectedSynthetic' in read('appx/host/server/models.mjs'),
