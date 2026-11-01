@@ -67,6 +67,13 @@ start_process() {
     # unix socket / TCP port and make the app hang for the gateway.
     pkill -TERM -f "sock_proxy.py ${SOCK_PATH}" 2>/dev/null || true
     pkill -TERM -f "${TRIM_APPDEST}/node/node server/index.mjs" 2>/dev/null || true
+    # fnOS-port P0-S1 (from HermesFNOS orphan lessons): host child processes
+    # (MCP bridge; native-mode engine + vision) re-parent to PID 1 when the
+    # host dies and would compete with the fresh instances after a restart.
+    # Patterns are anchored to THIS app's paths so the resident trim.hermes
+    # engine under @appdata/trim.hermes is never touched.
+    pkill -TERM -f "${TRIM_APPDEST}/control/tools/strata_mcp.py" 2>/dev/null || true
+    pkill -TERM -f "${APP_HOME}/components/engine/[^ ]*/strata" 2>/dev/null || true
     sleep 1
 
     mkdir -p "${APP_HOME}" "${APP_HOME}/state" "${APP_HOME}/home" "${APP_HOME}/workspace" "$(dirname "${SOCK_PATH}")"
@@ -87,7 +94,7 @@ start_process() {
     export STRATA_BIND="127.0.0.1"
     export STRATA_WORKSPACE="${APP_HOME}/workspace"
     export STRATA_DIST="${TRIM_APPDEST}/host/dist"
-    export STRATA_APP_VERSION="0.2.8"
+    export STRATA_APP_VERSION="0.2.9"
     # packaged app: real engine + real model library (the desktop shell sets the
     # same flags; without them the host runs the design/demo engine)
     export STRATA_REAL_ENGINE=1
@@ -174,6 +181,9 @@ stop_process() {
     done
     # the host supervises engine instances; make sure nothing lingers
     pkill -TERM -f "${TRIM_APPDEST}/host/server" 2>/dev/null
+    # P0-S1: child processes of the host must not outlive stop()
+    pkill -TERM -f "${TRIM_APPDEST}/control/tools/strata_mcp.py" 2>/dev/null
+    pkill -TERM -f "${APP_HOME}/components/engine/[^ ]*/strata" 2>/dev/null
     rm -f "${SOCK_PATH}" "${PID_FILE}"
     return 0
 }
