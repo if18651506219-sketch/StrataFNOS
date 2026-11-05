@@ -1,5 +1,14 @@
 #!/bin/bash
 
-### This script is called after the user change environment variables in application setting page.
+### This script is called after the user changes environment variables in the
+### application setting page.
+###
+### Deliberately a no-op: cmd/main reads its environment at process start, and
+### an implicit stop/start here would tear down the Node host (and any resident
+### engine connection / in-flight chat) from inside a settings callback. The
+### settings page already tells the user to restart the app for changes to take
+### effect. Once fnOS's config-callback semantics and env propagation are
+### verified on a real machine, a guarded restart can be added here — do NOT
+### add one speculatively.
 
 exit 0

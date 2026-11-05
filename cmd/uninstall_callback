@@ -1,5 +1,17 @@
 #!/bin/bash
 
 ### This script is called after the user uninstalls the application.
+### 0.2.10 fix: the old no-op left the resident engine's PLAINTEXT api_key on
+### disk (install_callback copies it into our data dir) and left the unpacked
+### engine/control bundle (several hundred MB) behind. Only app-generated
+### secrets/caches are removed here: state/, home/ and workspace/ are user
+### data and are deliberately preserved.
+
+[ -n "${TRIM_PKGHOME:-}" ] || { echo "TRIM_PKGHOME unset - nothing to clean" >&2; exit 0; }
+DATA="${TRIM_PKGHOME}/data"
+[ -d "$DATA" ] || exit 0
+
+rm -f "${DATA}/server_key" "${DATA}/server_key.tmp" "${DATA}/http_port"
+rm -rf "${DATA}/components"
 
 exit 0

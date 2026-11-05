@@ -116,9 +116,13 @@ start_process() {
     if curl -sf --max-time 2 http://127.0.0.1:8080/health 2>/dev/null | grep -q '"service"[[:space:]]*:[[:space:]]*"strata"'; then
         RESIDENT_URL="http://127.0.0.1:8080/v1"
     fi
+    # 0.2.10 修复：卷号不能写死 /vol2。fnOS 把应用数据放在实际存储卷上，
+    # 换卷/改卷号后旧路径扫不到 key，前端会静默降级到 native 模式（而
+    # config/privilege 未声明 GPU 设备直通，native 大概率起不来）。
+    # 扫描所有 /volN/@appdata，与 install_callback 的取法保持一致。
     RESIDENT_KEY="$(python3 -c "
 import glob,json
-for f in sorted(glob.glob('/vol2/@appdata/trim.hermes/workspace/strata/strata-*.json')):
+for f in sorted(glob.glob('/vol[0-9]*/@appdata/trim.hermes/workspace/strata/strata-*.json')):
     try:
         k=json.load(open(f)).get('api_key')
         if k: print(k); break
@@ -153,7 +157,15 @@ for f in sorted(glob.glob('/vol2/@appdata/trim.hermes/workspace/strata/strata-*.
         sleep 1
     done
     if [ "${ready}" != "1" ]; then
-        log_msg "host did not bind port ${port} in 30s"
+        # 0.2.10 修复：旧版只记一行日志就 return 0，fnOS 会显示"已启动"，
+        # 但网关 socket 后面根本没人接。启动失败必须让生命周期回调失败。
+        log_msg "host did not bind port ${port} in 30s - start FAILED"
+        local hp=$(pid_of "${HOST_PID_FILE}")
+        if check_process "$hp"; then
+            kill -TERM "${hp}" 2>/dev/null || true
+        fi
+        rm -f "${HOST_PID_FILE}" "${PID_FILE}" "${SOCK_PATH}"
+        return 1
     fi
 
     ( exec /usr/bin/python3 \
@@ -189,15 +201,20 @@ stop_process() {
 }
 
 status() {
-    if running; then
-        return 0
-    fi
-    return 1
+    # 0.2.10 修复：pidfile 存在 ≠ 服务可用。host 崩溃但 pid 被复用、或代理
+    # 已死而 host 还活着时，旧 status 仍返回 0，应用中心显示"运行中"却打不开。
+    running || return 1
+    local port=$(cat "${HTTP_PORT_FILE}" 2>/dev/null)
+    [ -n "${port}" ] || return 1
+    ss -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}\$" || return 1
+    [ -S "${SOCK_PATH}" ] || return 1
+    return 0
 }
 
 case $1 in
 start)
     start_process
+    exit $?
     ;;
 stop)
     stop_process
