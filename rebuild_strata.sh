@@ -108,6 +108,14 @@ grep -q 'await chooseFolder(' "$A/host/server/index.mjs" && { echo 'CHOOSEFOLDER
 # 0.2.10 修复：显式把仓库里的代理同步进载荷。旧流程假设包目录里的
 # sock_proxy.py 已被手工更新，改了仓库源码却打出旧代理是静默回归。
 cp sock_proxy.py "$A/sock_proxy.py" || exit 1
+# 0.2.11 修复：同上，cmd/* 也必须从仓库显式同步。旧流程只 sed 载荷里的旧
+# cmd/main 的 APP_VERSION，仓库修的跨卷扫描/honest status 全部静默丢失
+# （0.2.11 首打实测中招，verify L0.no-hardcoded-volume 拦下）。
+mkdir -p "$A/cmd"
+cp -f cmd/main cmd/install_callback cmd/uninstall_callback cmd/config_callback "$A/cmd/" || exit 1
+for c in main install_callback uninstall_callback config_callback; do
+  cmp -s "cmd/$c" "$A/cmd/$c" || { echo "CMD-SYNC-FAIL: $c"; exit 1; }
+done
 
 echo "== 4b. 载荷链接实体化（软链接 + 硬链接）"
 python3 delink_tree.py "$A" || exit 1
