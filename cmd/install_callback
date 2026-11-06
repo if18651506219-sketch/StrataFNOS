@@ -6,10 +6,15 @@
 ### falls back to ${TRIM_PKGHOME}/data/server_key when the 8080 config json
 ### (0700 trim.hermes) is not readable by the package user. Callbacks run as
 ### root during install/upgrade, so both sources are readable here.
+###
+### 0.2.10 fix: scan every /volN/@appdata instead of hardcoding /vol2 — the
+### volume number depends on where the user installed trim.hermes. Also guard
+### TRIM_PKGHOME so an unset variable can never make us write into /data.
 
 APPNAME="strata-app"
+[ -n "${TRIM_PKGHOME:-}" ] || { echo "TRIM_PKGHOME unset - skip key provisioning" >&2; exit 0; }
 KEYFILE="${TRIM_PKGHOME}/data/server_key"
-SRC_JSON="$(ls -1 /vol2/@appdata/trim.hermes/workspace/strata/strata-*.json 2>/dev/null | head -1)"
+SRC_JSON="$(python3 -c 'import glob; f=sorted(glob.glob("/vol[0-9]*/@appdata/trim.hermes/workspace/strata/strata-*.json")); print(f[0] if f else "")' 2>/dev/null)"
 
 mkdir -p "${TRIM_PKGHOME}/data" 2>/dev/null
 
@@ -17,9 +22,13 @@ TMPTKEY="${KEYFILE}.tmp"
 python3 - "${SRC_JSON:-/nonexistent}" > "$TMPTKEY" 2>/dev/null <<'PY'
 import json, sys
 try:
-    print(json.load(open(sys.argv[1])).get("api_key", ""))
+    k = json.load(open(sys.argv[1])).get("api_key", "")
 except Exception:
-    print("")
+    k = ""
+# 不要用 print("")：那会写入一个换行，让 `-s` 误判成"拿到 key"，
+# 结果落盘一个内容为 "\n" 的假 server_key。
+if k:
+    sys.stdout.write(str(k))
 PY
 
 if [ -s "$TMPTKEY" ]; then
