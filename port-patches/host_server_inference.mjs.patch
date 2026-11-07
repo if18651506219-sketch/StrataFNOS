@@ -1,5 +1,5 @@
---- /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/dl/appimg/squashfs-root/usr/lib/Strata/host/server/inference.mjs	2026-10-20 12:36:06.000000000 +0800
-+++ /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/strata-app/app/host/server/inference.mjs	2026-10-21 08:08:06.350601040 +0800
+--- a/host/server/inference.mjs
++++ b/host/server/inference.mjs
 @@ -58,12 +58,17 @@
   */
  async function probeStrata(baseUrl) {

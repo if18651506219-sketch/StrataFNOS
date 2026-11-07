@@ -1,6 +1,6 @@
---- /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/dl/appimg/squashfs-root/usr/lib/Strata/host/server/index.mjs	2026-10-20 12:36:06.000000000 +0800
-+++ /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/strata-app/app/host/server/index.mjs	2026-10-21 20:38:36.658091622 +0800
-@@ -259,6 +259,21 @@
+--- a/host/server/index.mjs
++++ b/host/server/index.mjs
+@@ -293,6 +293,21 @@
  
  /* ------------------------------------------------------------------- data --- */
  
@@ -22,7 +22,7 @@
  function setupState() {
    const s = store.get();
    return {
-@@ -621,6 +636,39 @@
+@@ -659,6 +674,39 @@
      const entry=serving.open({client:client??'Strata chat',endpoint:'/chat/completions',model:instance.apiModelId,instanceId:instance.id,gpuIds:instance.gpus.map(String),cancel:()=>cancel.abort()});
      try{serving.mark(entry.id,{state:'generating'});const applied=selectSkills(skillState,message,workspaceId);const result=await proxyCompletion({baseUrl:`http://127.0.0.1:${instance.port}/v1`,modelId:instance.apiModelId,authorization:instance.key,message,history,images,extra:{strata_mcp:useTools===true,...(thinkingBudget>0&&String(thinking).toLowerCase()!=='off'?{reasoning_budget_tokens:thinkingBudget}:{}),reasoning_effort:({off:'none',max:'high'}[String(thinking).toLowerCase()]??String(thinking).toLowerCase())},systemPrompt:[SYSTEM_PROMPT,skillInstructions(applied)].filter(Boolean).join('\n\n'),signal:signal?AbortSignal.any([signal,cancel.signal]):cancel.signal,onFrame:frame=>onFrame({...frame,requestId:entry.id,model:instance.label,contextMax:instance.metrics?.engine?.max_context??instance.context,skills:applied.map(s=>s.name)})});serving.mark(entry.id,{...result,usageSource:result.usageSource});serving.finish(entry.id,{tokensOut:result.tokensOut,durationMs:Date.now()-started});return result;}catch(e){serving.finish(entry.id,{durationMs:Date.now()-started,error:e.message});onFrame({type:'error',message:e.message,requestId:entry.id});return {error:e.message};}
    }
@@ -62,7 +62,7 @@
    runtimeState();
    let instance;
    try{instance=runtimeModels.resolve(runtimeModelId,{chatDefault:runtimeModelId===undefined});}
-@@ -934,7 +982,10 @@
+@@ -978,7 +1026,10 @@
    try {
      if (path.startsWith('/api/') && req.headers.origin) {
        const origin = new URL(req.headers.origin);
@@ -74,16 +74,25 @@
      }
      if (path.startsWith('/api/')) {
        const modelOperation = !['GET', 'OPTIONS'].includes(method) && /^\/api\/(models|local-models|runtime|image-models|engine|native)(\/|$)/.test(path) && !['/api/runtime/plan', '/api/engine/validate', '/api/local-models/inspect'].includes(path);
-@@ -980,7 +1031,7 @@
+@@ -1052,7 +1103,7 @@
+   /* Settings > Storage > Models folder: pick (or type) a folder, say what it means, then start the choice. Copying is Control's (strata models move). */
+   if(path==='/api/native/models-folder/plan'&&method==='POST'){
+    const typed=await typedFolder((await readBody(req)).path,{isAbsolute});
+-   const picked=typed?{path:typed}:await chooseFolder('Choose a folder for your models');
++   const picked=typed?{path:typed}:await pickFolderBrowser('Choose a folder for your models');
+    if(picked.unavailable){const u=chooserUnavailable(picked);return error(res,501,u.message,{code:u.code});}
+    if(picked.cancelled)return json(res,200,{cancelled:true});
+    return json(res,200,{plan:await native.planModelsFolder(picked.path)});}
+@@ -1079,7 +1130,7 @@
    if(path==='/api/native/local/preview'&&method==='POST'){
     /* "Use a local GGUF": pick (or type) the folder, and Control says what is in it. Nothing is copied or changed. */
-    const typed=await typedFolder((await readBody(req)).path,{isAbsolute});
+    const typed=await typedFolder((await readBody(req)).path,{isAbsolute,fileType:/\.gguf$/i});
 -   const picked=typed?{path:typed}:await chooseFolder('Choose the folder that holds your GGUF files');
-+   const picked=typed?{path:typed}:await pickFolderBrowser('选择存放 GGUF 文件的文件夹');
++   const picked=typed?{path:typed}:await pickFolderBrowser('Choose the folder that holds your GGUF files');
     if(picked.unavailable){const u=chooserUnavailable(picked);return error(res,501,u.message,{code:u.code});};
     if(picked.cancelled)return json(res,200,{cancelled:true});
     return json(res,200,{path:picked.path,preview:await native.localPreview(picked.path)});}
-@@ -1242,6 +1293,11 @@
+@@ -1339,6 +1390,11 @@
      });
    }
  
@@ -95,7 +104,7 @@
    // --- Strata Control: what the installed app runs on, and what it will not do ---------------------
    if (path === '/api/control/status' && method === 'GET') {
      const engine = control ? await control.engine().catch(e => ({ usable: false, notice: e.message })) : null;
-@@ -1301,8 +1357,29 @@
+@@ -1397,6 +1453,19 @@
      res.writeHead(200, { 'content-type': file.type, 'content-length': file.bytes.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); res.end(file.bytes); return undefined;
    }
  
@@ -113,6 +122,12 @@
 +    return json(res, 200, { ok: true });
 +  }
    if (path === '/api/setup' && method === 'GET') return json(res, 200, setupState());
+   if (path === '/api/engine/first-run' && method === 'GET') {
+     if (!control?.updateCheck) return json(res, 200, { status: 'unavailable', gpus: [] });
+@@ -1428,7 +1497,15 @@
+     await pipeline(req, createWriteStream(target, { mode: 0o600 }));
+     return json(res, 202, native.operation('install-engine-file', { path: target }));
+   }
 -  if (path === '/api/updates/check' && method === 'GET' && control?.updateCheck) return json(res, 200, await checkComponentUpdates({ control, appUpdater, appVersion: process.env.STRATA_APP_VERSION || null }));
 +  if (path === '/api/updates/check' && method === 'GET') {
 +    // fnOS port: updates are re-ported manually as new fpk releases (this build's
@@ -126,7 +141,7 @@
    if (path === '/api/updates/check' && method === 'GET') return json(res, 200, await checkUpdates({ appVersion:appVersionToShow(setupState().app.version,native.state().version), engineVersion:native.state().available?(native.state().installed?.engine?.version??null):(await engine.config()).engine.version }));
  
    if (path === '/api/setup/step' && method === 'POST') {
-@@ -1426,6 +1503,13 @@
+@@ -1552,6 +1629,13 @@
      if (method === 'POST' && action === 'install') { try { return json(res, 200, runtimeModels.libraryState(await models.install(id))); } catch (err) { return error(res, err.status ?? 500, err.message); } }
      if (method === 'POST' && action === 'cancel') return json(res, 200, runtimeModels.libraryState(models.cancel(id)));
      if (method === 'POST' && action === 'load') {
@@ -140,7 +155,7 @@
        const hw = await hardware.detect();
        if(storageChanging)return error(res,409,'Wait for the model folder check to finish.');
        if(!models.REAL){
-@@ -1774,7 +1858,7 @@
+@@ -1910,7 +1994,7 @@
      try {
        // The dialog is the normal path; a typed `path` in the body stands in where none exists.
        const typed = await typedFolder((await readBody(req)).path, { isAbsolute });
@@ -149,7 +164,7 @@
        if (picked.unavailable) {const u=chooserUnavailable(picked);return error(res,501,u.message,{code:u.code});};
        if (picked.cancelled) return json(res, 200, { cancelled: true });
        const chosen = picked.path;
-@@ -1799,7 +1883,7 @@
+@@ -1935,7 +2019,7 @@
    if (path === '/api/workspaces/pick' && method === 'POST') {
      try {
        const typed = await typedFolder((await readBody(req)).path, { isAbsolute });

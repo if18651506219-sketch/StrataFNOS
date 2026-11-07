@@ -1,5 +1,5 @@
---- /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/dl/appimg/squashfs-root/usr/lib/Strata/host/server/engine.mjs	2026-10-20 12:36:06.000000000 +0800
-+++ /vol2/@apphome/hermes-agent/data/workspace/strata-fpk/strata-app/app/host/server/engine.mjs	2026-10-21 13:29:27.742622293 +0800
+--- a/host/server/engine.mjs
++++ b/host/server/engine.mjs
 @@ -171,6 +171,18 @@
        if (!item || typeof item.id !== 'string') continue;
        overrides[item.id] = item.value;

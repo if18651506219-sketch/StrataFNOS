@@ -94,7 +94,7 @@ start_process() {
     export STRATA_BIND="127.0.0.1"
     export STRATA_WORKSPACE="${APP_HOME}/workspace"
     export STRATA_DIST="${TRIM_APPDEST}/host/dist"
-    export STRATA_APP_VERSION="0.2.10"
+    export STRATA_APP_VERSION="0.2.12"
     # packaged app: real engine + real model library (the desktop shell sets the
     # same flags; without them the host runs the design/demo engine)
     export STRATA_REAL_ENGINE=1
