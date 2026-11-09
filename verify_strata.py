@@ -21,7 +21,13 @@
 import sys, os, tarfile, subprocess, tempfile, hashlib
 
 FPK = sys.argv[1] if len(sys.argv) > 1 else 'strata-app.fpk'
-WANT_VER = sys.argv[2] if len(sys.argv) > 2 else '0.2.3'
+WANT_VER = sys.argv[2] if len(sys.argv) > 2 else None
+if WANT_VER is None:
+    import re as _re
+    try:
+        WANT_VER = _re.search(r'^version\s*=\s*(\S+)', open('strata-app/manifest').read(), _re.M).group(1)
+    except Exception:
+        sys.exit("WANT_VER missing: pass <VER> as argv[2] or run from build root with strata-app/manifest")
 
 fails = []
 def chk(name, ok, detail=''):
